@@ -1,0 +1,27 @@
+# 隐藏文件夹
+.*/
+__pycache__/
+
+# 压缩文件
+*.zip
+*.sb3
+
+# 系统文件
+nul
+
+# 文档
+AGENTS.md
+CLAUDE.md
+
+# 不需要的文件夹
+sb3_v2/
+sb3_v3/
+svg/
+iku55/
+20240520_AreaForecastLocalE_GIS/
+
+# Python
+*.pyc
+*.pyo
+.venv/
+venv/
