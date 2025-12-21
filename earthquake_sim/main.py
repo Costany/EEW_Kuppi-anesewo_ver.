@@ -467,7 +467,7 @@ class EarthquakeSimulator:
 
     def draw_alert_circles(self):
         """绘制站点首次检测震度时的白色圆圈闪烁动画"""
-        if not self.earthquake:
+        if not self.earthquake or self.display_mode != MODE_STATION:
             return
 
         current_time = self.earthquake.time
