@@ -128,6 +128,12 @@ class EarthquakeSimulator:
         self.regions_data = []  # 细分区域（用于填色）
         self.load_station_region_data()
 
+        # 加载音频
+        pygame.mixer.init()
+        sound_path = os.path.join(os.path.dirname(__file__), "sounds/intensity4.wav")
+        self.intensity4_sound = pygame.mixer.Sound(sound_path) if os.path.exists(sound_path) else None
+        self.intensity4_played = False
+
     def load_icons(self):
         """加载SVG图标"""
         assets_dir = os.path.join(os.path.dirname(__file__), "assets")
@@ -249,6 +255,8 @@ class EarthquakeSimulator:
         self.max_intensity = 0
         self.max_intensity_location = ""
 
+        prev_max = self.max_intensity
+
         for station in self.stations:
             lat = float(station['lat'])
             lon = float(station['lon'])
@@ -287,6 +295,11 @@ class EarthquakeSimulator:
                 if p_intensity > self.max_intensity:
                     self.max_intensity = p_intensity
                     self.max_intensity_location = area_name
+
+        # 检测震度4并播放音频（震度4的范围是3.5-4.5）
+        if not self.intensity4_played and self.max_intensity >= 3.5 and self.intensity4_sound:
+            self.intensity4_sound.play()
+            self.intensity4_played = True
 
     def draw_stations(self):
         """绘制站点模式 - 使用s1-s9图标"""
@@ -648,6 +661,7 @@ class EarthquakeSimulator:
                         self.region_intensities = {}
                         self.max_intensity = 0
                         self.detected_regions = []
+                        self.intensity4_played = False
                     elif event.key == pygame.K_r:
                         self.temp_lat = 35.7
                         self.temp_lon = 139.7
@@ -662,6 +676,7 @@ class EarthquakeSimulator:
                         self.station_intensities = {}
                         self.region_max_intensities = {}
                         self.max_intensity = 0
+                        self.intensity4_played = False
                     elif event.key == pygame.K_t:
                         self.display_mode = MODE_STATION if self.display_mode == MODE_REGION else MODE_REGION
                     elif event.key == pygame.K_EQUALS or event.key == pygame.K_PLUS:
@@ -684,6 +699,7 @@ class EarthquakeSimulator:
                         self.setting_mode = True
                         self.station_intensities = {}
                         self.region_max_intensities = {}
+                        self.intensity4_played = False
                 elif event.button == 4:  # 滚轮向上 - 放大
                     self.zoom_map(event.pos, 1.2)
                 elif event.button == 5:  # 滚轮向下 - 缩小
