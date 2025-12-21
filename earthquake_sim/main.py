@@ -134,6 +134,10 @@ class EarthquakeSimulator:
         self.intensity4_sound = pygame.mixer.Sound(sound_path) if os.path.exists(sound_path) else None
         self.intensity4_played = False
 
+        # 白色圆圈闪烁动画
+        self.max_triggered_intensity = 0.0  # 已触发的最大震度值
+        self.alert_animations = []  # 动画队列: [(lat, lon, start_time, scale), ...]
+
     def load_icons(self):
         """加载SVG图标"""
         assets_dir = os.path.join(os.path.dirname(__file__), "assets")
@@ -301,6 +305,14 @@ class EarthquakeSimulator:
             self.intensity4_sound.play()
             self.intensity4_played = True
 
+        # 检测震度3+并触发白色圆圈动画（只在震度升高时触发）
+        for (lat, lon), (intensity, is_s_wave) in self.station_intensities.items():
+            if intensity >= 3.0 and intensity > self.max_triggered_intensity:
+                scale = intensity_to_scale(intensity)
+                self.max_triggered_intensity = intensity
+                self.alert_animations.append((lat, lon, self.earthquake.time, scale))
+                break  # 只触发第一个站点
+
     def draw_stations(self):
         """绘制站点模式 - 使用s1-s9图标"""
         # 图标缩放因子：限制在0.02-0.41之间
@@ -414,15 +426,17 @@ class EarthquakeSimulator:
             progress = current_time / s_arrival_time
             angle_deg = min(360, progress * 360)
 
-            # 圆圈大小随缩放变化，但有限制
-            arc_radius = min(40, max(15, int(20 * self.zoom_level)))
+            # 圆圈大小与震央图标同步缩放
+            base_radius = 100
+            arc_radius = max(15, int(base_radius * 0.15 * self.zoom_level))
             arc_rect = pygame.Rect(ex - arc_radius, ey - arc_radius, arc_radius * 2, arc_radius * 2)
 
-            # 从顶部(90度)开始逆时针画弧
+            # 从顶部(90度)开始逆时针画弧，颜色跟随当前震度
+            prep_color = get_shindo_color(self.max_intensity) if self.max_intensity >= 0.5 else (128, 128, 128)
             start_angle = math.pi / 2
             end_angle = start_angle + math.radians(angle_deg)
             if angle_deg > 1:
-                pygame.draw.arc(self.screen, (255, 250, 250), arc_rect, start_angle, end_angle, 3)  # snow白色
+                pygame.draw.arc(self.screen, prep_color, arc_rect, start_angle, end_angle, 3)
 
         # S波圆圈（S波到达地表后显示）
         if current_time >= s_arrival_time and s_radius_px > 0 and s_radius_px < WINDOW_WIDTH * 3:
@@ -450,6 +464,42 @@ class EarthquakeSimulator:
             s = max(8, int(15 * icon_scale))
             pygame.draw.line(self.screen, (255, 0, 0), (ex-s, ey), (ex+s, ey), 3)
             pygame.draw.line(self.screen, (255, 0, 0), (ex, ey-s), (ex, ey+s), 3)
+
+    def draw_alert_circles(self):
+        """绘制站点首次检测震度时的白色圆圈闪烁动画"""
+        if not self.earthquake:
+            return
+
+        current_time = self.earthquake.time
+        duration = 0.8  # 动画持续时间（秒）
+        to_remove = []
+
+        for i, (lat, lon, start_time, scale) in enumerate(self.alert_animations):
+            elapsed = current_time - start_time
+            if elapsed > duration:
+                to_remove.append(i)
+                continue
+
+            # 计算动画进度（0到1）
+            progress = elapsed / duration
+
+            # 半径扩散：10px -> 60px
+            radius = int(10 + 50 * progress)
+
+            # 透明度衰减：255 -> 0
+            alpha = int(255 * (1 - progress))
+
+            # 转换为屏幕坐标
+            x, y = self.latlon_to_screen(lat, lon)
+
+            # 绘制白色圆圈（使用临时surface实现透明度）
+            temp_surface = pygame.Surface((radius * 2 + 4, radius * 2 + 4), pygame.SRCALPHA)
+            pygame.draw.circle(temp_surface, (255, 255, 255, alpha), (radius + 2, radius + 2), radius, 3)
+            self.screen.blit(temp_surface, (x - radius - 2, y - radius - 2))
+
+        # 清理已完成的动画
+        for i in reversed(to_remove):
+            self.alert_animations.pop(i)
 
     def draw_earthquake_info(self):
         """绘制地震速报风格信息（左上角）- 使用震度图标"""
@@ -662,6 +712,8 @@ class EarthquakeSimulator:
                         self.max_intensity = 0
                         self.detected_regions = []
                         self.intensity4_played = False
+                        self.max_triggered_intensity = 0.0
+                        self.alert_animations.clear()
                     elif event.key == pygame.K_r:
                         self.temp_lat = 35.7
                         self.temp_lon = 139.7
@@ -677,6 +729,8 @@ class EarthquakeSimulator:
                         self.region_max_intensities = {}
                         self.max_intensity = 0
                         self.intensity4_played = False
+                        self.max_triggered_intensity = 0.0
+                        self.alert_animations.clear()
                     elif event.key == pygame.K_t:
                         self.display_mode = MODE_STATION if self.display_mode == MODE_REGION else MODE_REGION
                     elif event.key == pygame.K_EQUALS or event.key == pygame.K_PLUS:
@@ -739,6 +793,7 @@ class EarthquakeSimulator:
                 self.draw_regions_with_intensity()
 
             self.draw_wave_circles()
+            self.draw_alert_circles()
             self.draw_earthquake_info()
             self.draw_setting_info()
             self.draw_help()
