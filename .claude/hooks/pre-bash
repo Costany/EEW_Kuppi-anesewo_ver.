@@ -1,0 +1,20 @@
+#!/bin/bash
+# Claude Code Hook: Block pip install commands
+# Only the user can manage the Conda environment - Claude Code is not allowed to install packages
+
+COMMAND="$*"
+
+# Check if command contains pip installation
+if echo "$COMMAND" | grep -qE "pip\s+install|pip3\s+install|python.*-m.*pip.*install"; then
+    echo "❌ ERROR: Claude Code is not allowed to execute pip install!"
+    echo ""
+    echo "Package installation is the user's responsibility only."
+    echo "Please tell the user to run this in their conda environment:"
+    echo ""
+    echo "  conda activate meteo"
+    echo "  pip install <package_name>"
+    echo ""
+    exit 1
+fi
+
+exit 0
