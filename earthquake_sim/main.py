@@ -995,9 +995,9 @@ class EarthquakeSimulator:
                                 src.magnitude = self.temp_mag
                                 src.eq.magnitude = self.temp_mag
                         elif event.key == pygame.K_c:
-                            self.rupture_velocity = min(10.0, self.rupture_velocity + 0.2)
-                        elif event.key == pygame.K_v:
                             self.rupture_velocity = max(0.5, self.rupture_velocity - 0.2)
+                        elif event.key == pygame.K_v:
+                            self.rupture_velocity = min(10.0, self.rupture_velocity + 0.2)
                         elif event.key == pygame.K_d and self.multi_state == "choose_start":
                             if self.multi_direction == "forward":
                                 self.multi_direction = "backward"
