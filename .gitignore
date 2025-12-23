@@ -2,10 +2,6 @@
 .*/
 __pycache__/
 
-# 但允许 .claude/hooks 被追踪
-!.claude/
-!.claude/hooks/
-
 # 压缩文件
 *.zip
 *.sb3
@@ -13,9 +9,9 @@ __pycache__/
 # 系统文件
 nul
 
-# 文档 (CLAUDE.md 应该被版本控制，所以注释掉)
+# 文档
 AGENTS.md
-# CLAUDE.md
+CLAUDE.md
 
 # 不需要的文件夹
 sb3_v2/
@@ -29,4 +25,3 @@ iku55/
 *.pyo
 .venv/
 venv/
-
