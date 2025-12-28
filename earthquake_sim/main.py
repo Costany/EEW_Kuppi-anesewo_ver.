@@ -23,7 +23,6 @@ from projection import latlon_to_xy_km, xy_km_to_latlon
 from sound_manager import SoundManager
 from eew_tracker import EEWTracker
 from station_manager import StationManager
-from eew_alert import EEWAlert
 from earthquake_history import EarthquakeHistory
 
 # 显示模式
@@ -151,6 +150,7 @@ class EarthquakeSimulator:
         self.zoom_interval = 2.0  # 缩放间隔（秒）- 停一下再缩
         self.is_zooming = False  # 是否正在缩放中（缩放动画）
         self.max_view_radius_km = 700  # 最大视野半径（km）- 缩到这个范围就停止
+        self.min_view_radius_km = 100  # 最小视野半径（km）- 避免视野太小
         self.waiting_for_return = False  # 是否正在等待回到震央（避免重复设置时间）
 
         # 波形显示控制
@@ -166,6 +166,9 @@ class EarthquakeSimulator:
         # 真实波形的初始震央位置（不随EEW修正而改变）
         self.true_epicenter_lat = None
         self.true_epicenter_lon = None
+        self.true_depth = None  # 真实深度（用于追标波形补偿）
+        self.true_mag = None  # 真实震级
+        self.true_earthquake = None  # 真实地震对象（用于站点震度计算）
 
         # 区域震度数据
         self.region_intensities = {}
@@ -200,6 +203,7 @@ class EarthquakeSimulator:
         self.intensity4_played = False
         self.intensity7_sound = None
         self.intensity7_played = False
+        self.keihou_played = False  # 警報音频是否已播放
 
         # 白色圆圈闪烁动画
         self.max_triggered_intensity = 0.0  # 已触发的最大震度值
@@ -223,9 +227,6 @@ class EarthquakeSimulator:
         except Exception as e:
             print(f"[主程序] 站点管理器加载失败: {e}")
             self.station_manager = None
-
-        # 新增：EEW警报框UI
-        self.eew_alert_box = EEWAlert()
 
         # 新增：地震履歴记录系统
         self.history = EarthquakeHistory()
@@ -363,6 +364,7 @@ class EarthquakeSimulator:
         self.max_intensity_location = ""
         self.intensity4_played = False
         self.intensity7_played = False
+        self.keihou_played = False  # 警報音频是否已播放（震度5弱以上）
         self.max_triggered_intensity = 0.0
         self.alert_animations.clear()
         self.triggered_intensity_sounds = set()  # 重置音效触发记录
@@ -432,6 +434,7 @@ class EarthquakeSimulator:
         self.paused = False
         self.intensity4_played = False
         self.intensity7_played = False
+        self.keihou_played = False
         self.max_triggered_intensity = 0.0
         self.alert_animations.clear()
 
@@ -797,9 +800,28 @@ class EarthquakeSimulator:
             # 创建临时地震对象用于绘制追标波形
             from earthquake import Earthquake
             temp_eq = Earthquake(tracking_lat, tracking_lon, tracking_depth, tracking_mag)
-            # 追标波形时间 = 当前时间 - 首次检测时间（追波从站点检测到时才开始）
-            if self.first_detection_time is not None:
-                temp_eq.time = self.earthquake.time - self.first_detection_time
+
+            # 追标波形时间计算：使用非线性公式同步P波地表半径
+            # Scratch公式: radius = sqrt((6.5*t + depth)^2 - depth^2)
+            # 要让追标波与真实波地表半径相同，需要数学推导
+            if self.first_detection_time is not None and self.true_depth is not None:
+                import math
+                SCRATCH_P = 6.5  # P波速度常数
+
+                # 真实波的总传播距离
+                D_real = SCRATCH_P * self.earthquake.time + self.true_depth
+
+                # 计算真实波的地表半径平方: r^2 = D^2 - depth^2
+                radius_sq = D_real ** 2 - self.true_depth ** 2
+
+                if radius_sq > 0:
+                    # 反推追标波需要的总传播距离: D_track^2 = r^2 + depth_track^2
+                    D_track = math.sqrt(radius_sq + tracking_depth ** 2)
+                    # 反推追标波的时间: t = (D - depth) / 6.5
+                    temp_eq.time = max(0, (D_track - tracking_depth) / SCRATCH_P)
+                else:
+                    # P波还没到地表
+                    temp_eq.time = 0
             else:
                 temp_eq.time = 0  # 尚未检测到，不显示波形
 
@@ -955,11 +977,33 @@ class EarthquakeSimulator:
         idx_map = {'0':0, '1':1, '2':2, '3':3, '4':4, '5-':5, '5+':6, '6-':7, '6+':8, '7':9}
         idx = idx_map.get(scale, 0)
 
-        # 背景框
-        pygame.draw.rect(self.screen, (0, 0, 0), (10, 10, 360, 180))
-        pygame.draw.rect(self.screen, color, (10, 10, 360, 180), 3)
+        # 计算面板高度（根据是否显示长周期）
+        panel_height = 180
+        if ref_mag >= 7.0:
+            panel_height = 210  # 多出长周期显示空间
 
-        y = 20
+        # 背景框
+        pygame.draw.rect(self.screen, (0, 0, 0), (10, 10, 360, panel_height))
+        pygame.draw.rect(self.screen, color, (10, 10, 360, panel_height), 3)
+
+        y = 15
+        # 緊急地震速報 标题：根据震度显示"予報"或"警報"
+        # 震度5弱(5.0)以上显示"警報"，否则显示"予報"
+        if self.max_intensity >= 5.0:
+            eew_title = "緊急地震速報(警報)"
+            title_color = (255, 100, 100)  # 红色
+            # 首次达到震度5弱时播放警報音频
+            if not self.keihou_played and self.sound_manager:
+                self.sound_manager.play_keihou()
+                self.keihou_played = True
+                print("[EEW] 播放警報音频 - 震度5弱以上")
+        else:
+            eew_title = "緊急地震速報(予報)"
+            title_color = (255, 200, 100)  # 橙黄色
+        surf = self.font_cn_small.render(eew_title, True, title_color)
+        self.screen.blit(surf, (20, y))
+        y += 22
+
         surf = self.font_cn.render(f"最大震度", True, (255, 255, 255))
         self.screen.blit(surf, (20, y))
 
@@ -1010,6 +1054,25 @@ class EarthquakeSimulator:
                 status_color = (255, 200, 0)  # 黄色
             surf = self.font_cn_small.render(status_text, True, status_color)
             self.screen.blit(surf, (20, y))
+
+        # 推定長周期（M7.0以上显示）
+        if ref_mag >= 7.0:
+            y += 25
+            # 长周期等级：简化计算（M7.0-7.4: 3级, M7.5-7.9: 4级, M8.0+: 4级）
+            if ref_mag >= 7.5:
+                period_level = "4"
+                period_color = (150, 0, 150)  # 紫色
+            else:
+                period_level = "3"
+                period_color = (255, 0, 0)  # 红色
+
+            surf = self.font_cn_small.render("推定長周期", True, (200, 200, 200))
+            self.screen.blit(surf, (20, y + 5))
+            # 长周期等级方框
+            pygame.draw.rect(self.screen, period_color, (120, y, 35, 25))
+            surf = self.font_cn.render(period_level, True, (255, 255, 255))
+            text_rect = surf.get_rect(center=(137, y + 12))
+            self.screen.blit(surf, text_rect)
 
     def draw_setting_info(self):
         """绘制设置信息（无背景框）"""
@@ -1258,18 +1321,29 @@ class EarthquakeSimulator:
         epicenter_lat = self.earthquake.lat
         epicenter_lon = self.earthquake.lon
 
-        # 获取P波和S波半径
-        p_radius = self.earthquake.get_p_wave_radius()
-        s_radius = self.earthquake.get_s_wave_radius()
+        # 获取P波和S波半径（使用真实地震对象）
+        true_eq = self.true_earthquake if hasattr(self, 'true_earthquake') and self.true_earthquake else self.earthquake
+        p_radius = true_eq.get_p_wave_radius()
+        s_radius = true_eq.get_s_wave_radius()
 
-        # 收集所有检测到波的站点（震度>=0）
+        # 从新站点系统收集检测到的站点（使用真实震度，不受追标误差影响）
         all_detected_stations = []
-        for (lat, lon), (intensity, is_s_wave) in self.station_intensities.items():
-            if intensity >= 0:
-                all_detected_stations.append((lat, lon, intensity, is_s_wave))
+        high_intensity_stations = []
 
-        # 收集震度3+的站点（用于正式追标）
-        high_intensity_stations = [(lat, lon, i) for lat, lon, i, _ in all_detected_stations if i >= 3.0]
+        if self.station_manager:
+            for station in self.station_manager.stations:
+                if station.intensity >= 0:
+                    # 震度>=0的站点
+                    all_detected_stations.append((station.lat, station.lon, station.intensity, station.s_wave_arrived))
+                    # 震度>=3的站点
+                    if station.intensity >= 3.0:
+                        high_intensity_stations.append((station.lat, station.lon, station.intensity))
+        else:
+            # 回退到旧系统（兼容）
+            for (lat, lon), (intensity, is_s_wave) in self.station_intensities.items():
+                if intensity >= 0:
+                    all_detected_stations.append((lat, lon, intensity, is_s_wave))
+            high_intensity_stations = [(lat, lon, i) for lat, lon, i, _ in all_detected_stations if i >= 3.0]
 
         # 模式切换逻辑
         if self.auto_zoom_mode == "waiting":
@@ -1285,11 +1359,14 @@ class EarthquakeSimulator:
                 self.first_detection_time = current_time
                 self.zoom_locked = False
 
+                # 检测到异动时就显示追标波形（Scratch兼容）
+                self.tracking_wave_visible = True
+
                 # 播放检测音效（chime）
                 if self.sound_manager:
                     self.sound_manager.play_chime()
 
-                print(f"[检测] 站点检测到异动 - 震度{target_intensity:.1f} (t={current_time:.1f}s)")
+                print(f"[检测] 站点检测到异动 - 震度{target_intensity:.1f} (t={current_time:.1f}s), 显示追标波形")
 
         elif self.auto_zoom_mode == "detecting":
             # 检测模式：镜头移动到检测站点，400km视野
@@ -1363,6 +1440,21 @@ class EarthquakeSimulator:
                             'min_lon': min_lon - lon_margin,
                             'max_lon': max_lon + lon_margin
                         }
+
+                        # 确保视野不小于最小视野半径
+                        min_lat_range = self.min_view_radius_km * 2 / 111  # km转换为度
+                        current_lat_range = target_bounds['max_lat'] - target_bounds['min_lat']
+                        if current_lat_range < min_lat_range:
+                            # 视野太小，扩大到最小视野
+                            center_lat = (target_bounds['min_lat'] + target_bounds['max_lat']) / 2
+                            center_lon = (target_bounds['min_lon'] + target_bounds['max_lon']) / 2
+                            half_range = min_lat_range / 2
+                            target_bounds = {
+                                'min_lat': center_lat - half_range,
+                                'max_lat': center_lat + half_range,
+                                'min_lon': center_lon - half_range * 1.2,  # 经度方向略宽
+                                'max_lon': center_lon + half_range * 1.2
+                            }
 
                         # 快速过渡到目标边界
                         alpha = 0.5
@@ -1752,6 +1844,14 @@ class EarthquakeSimulator:
                             # 保存真实震央位置（不随EEW修正而改变）
                             self.true_epicenter_lat = self.temp_lat
                             self.true_epicenter_lon = self.temp_lon
+                            self.true_depth = self.temp_depth  # 保存真实深度
+                            self.true_mag = self.temp_mag  # 保存真实震级
+
+                            # 创建真实地震对象（始终使用真实震央位置，用于站点震度计算）
+                            self.true_earthquake = Earthquake(
+                                self.temp_lat, self.temp_lon,
+                                self.temp_depth, self.temp_mag
+                            )
 
                             # 创建EEW追标器
                             if self.eew_tracking_enabled:
@@ -1760,7 +1860,7 @@ class EarthquakeSimulator:
                                     self.temp_depth, self.temp_mag,
                                     enabled=True
                                 )
-                                # 使用追标器的初始值创建地震
+                                # 使用追标器的初始值创建地震（用于追标波形显示）
                                 lat, lon, depth, mag = self.eew_tracker.get_current_values()
                                 self.earthquake = Earthquake(lat, lon, depth, mag)
                             else:
@@ -1784,6 +1884,7 @@ class EarthquakeSimulator:
                             self.detected_regions = []
                             self.intensity4_played = False
                             self.intensity7_played = False
+                            self.keihou_played = False
                             self.max_triggered_intensity = 0.0
                             self.alert_animations.clear()
                             self.eew_alert_played = False  # 重置EEW警报音播放状态
@@ -1854,9 +1955,12 @@ class EarthquakeSimulator:
                         self.paused = not self.paused
                     elif event.key == pygame.K_r:
                         self.earthquake = None
+                        self.true_earthquake = None  # 重置真实地震对象
                         self.eew_tracker = None  # 重置追标器
                         self.true_epicenter_lat = None  # 重置真实震央位置
                         self.true_epicenter_lon = None
+                        self.true_depth = None  # 重置真实深度
+                        self.true_mag = None  # 重置真实震级
                         self.reset_auto_tracking()  # 重置追踪状态
                         self.setting_mode = True
                         self.station_intensities = {}
@@ -1864,6 +1968,7 @@ class EarthquakeSimulator:
                         self.max_intensity = 0
                         self.intensity4_played = False
                         self.intensity7_played = False
+                        self.keihou_played = False
                         self.max_triggered_intensity = 0.0
                         self.alert_animations.clear()
                         self.eew_alert_played = False  # 重置EEW警报音播放状态
@@ -1961,11 +2066,18 @@ class EarthquakeSimulator:
                     elif not self.setting_mode and self.sim_mode == "single":
                         # 只有单震源模式下才允许右键重置
                         self.earthquake = None
+                        self.true_earthquake = None  # 重置真实地震对象
+                        self.eew_tracker = None  # 重置追标器
+                        self.true_epicenter_lat = None
+                        self.true_epicenter_lon = None
+                        self.true_depth = None
+                        self.true_mag = None
                         self.setting_mode = True
                         self.station_intensities = {}
                         self.region_max_intensities = {}
                         self.intensity4_played = False
                         self.intensity7_played = False
+                        self.keihou_played = False
                         self.max_triggered_intensity = 0.0
                         self.alert_animations.clear()
                         self.eew_alert_played = False  # 重置EEW警报音播放状态
@@ -2001,14 +2113,21 @@ class EarthquakeSimulator:
                 if self.sim_mode == "single" and self.earthquake:
                     self.earthquake.update(dt * self.time_scale)
 
+                    # 同步真实地震对象的时间（用于站点震度计算）
+                    if hasattr(self, 'true_earthquake') and self.true_earthquake:
+                        self.true_earthquake.time = self.earthquake.time
+
                     # 先计算站点震度（用于驱动EEW追标器）
                     self.calculate_station_intensities()
 
                     # 新增：更新站点管理器（返回检测到的震度等级）
+                    # 重要：使用真实地震对象，确保站点震度从正确的震央位置扩散
                     if self.station_manager:
+                        # 使用真实地震对象进行站点计算（如果可用）
+                        earthquake_for_stations = self.true_earthquake if hasattr(self, 'true_earthquake') and self.true_earthquake else self.earthquake
                         detected_levels = self.station_manager.update(
-                            self.earthquake,
-                            self.earthquake.time,
+                            earthquake_for_stations,
+                            earthquake_for_stations.time,
                             dt * self.time_scale  # 传递dt参数用于渐进式增长
                         )
 
@@ -2042,17 +2161,19 @@ class EarthquakeSimulator:
                             self.station_manager.stations
                         )
 
-                    # 新增：更新EEW警报框
-                    if hasattr(self, 'eew_alert_box') and self.station_manager:
-                        self.eew_alert_box.update(self.earthquake, self.station_manager, dt)
-
                     # 更新EEW追标器（站点驱动）
                     if self.eew_tracker:
-                        # 统计检测到地震波的站点数（震度>=3）
-                        detected_station_count = sum(
-                            1 for (_, _), (intensity, _) in self.station_intensities.items()
-                            if intensity >= 3.0
-                        )
+                        # 统计检测到地震波的站点数（震度>=3）- 使用新站点系统
+                        if self.station_manager:
+                            detected_station_count = sum(
+                                1 for s in self.station_manager.stations
+                                if s.intensity >= 3.0
+                            )
+                        else:
+                            detected_station_count = sum(
+                                1 for (_, _), (intensity, _) in self.station_intensities.items()
+                                if intensity >= 3.0
+                            )
 
                         # 站点驱动修正
                         was_revised = self.eew_tracker.update(detected_station_count, self.earthquake.time)
@@ -2102,10 +2223,6 @@ class EarthquakeSimulator:
 
             self.draw_wave_circles()
             self.draw_alert_circles()
-
-            # 新增：绘制EEW警报框
-            if hasattr(self, 'eew_alert_box') and not self.setting_mode:
-                self.eew_alert_box.render(self.screen, self.earthquake, self.locator)
 
             self.draw_earthquake_info()
             self.draw_setting_info()

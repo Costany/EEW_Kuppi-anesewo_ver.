@@ -137,11 +137,12 @@ class EEWTracker:
 
         if mag_error_abs > self.overthrow_mag_threshold or depth_error_abs > self.overthrow_depth_threshold:
             # 推翻重来：意识到震级或深度完全错误
-            self.current_lat_error = random.uniform(-0.5, 0.5)
-            self.current_lon_error = random.uniform(-0.5, 0.5)
-            self.current_depth_error = random.uniform(-20, 20)
-            self.current_mag_error = random.uniform(-0.5, 0.5)
-            print(f"[EEW追标] 第{self.revision_count}次修正 - **推翻重来** (站点:{detected_station_count}, t={elapsed_time:.1f}s)")
+            # 但不要完全重置，而是减半误差（避免追标波突然跳跃）
+            self.current_lat_error *= 0.5
+            self.current_lon_error *= 0.5
+            self.current_depth_error *= 0.5  # 保持深度方向，只减半
+            self.current_mag_error *= 0.5
+            print(f"[EEW追标] 第{self.revision_count}次修正 - **大幅修正** (站点:{detected_station_count}, t={elapsed_time:.1f}s)")
             print(f"  原因: 震级误差{mag_error_abs:.1f}或深度误差{depth_error_abs:.0f}km过大")
         else:
             # 正常修正：误差逐步收敛

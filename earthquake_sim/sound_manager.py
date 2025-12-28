@@ -37,21 +37,24 @@ class SoundManager:
         self.audio_files = {
             # EEW警报音
             'eew': '697cbc9cfa2c83151f4d7d4ce5ffebe7.wav',
-            
-            # 播音员语音
-            'warning': '5fac8e1afab5aa7f0c4597fef164fd10.mp3',  # 警報
-            'emergency_alert': '159244e8557e16cb7a8a88386ac566b6.mp3',  # 緊急地震速報
-            'tsunami': 'a9c826ea89ac2745d409a775b8fb8c99.mp3',  # 津波
-            'correction': '1e79cf503994fbc4b07e6807d98402e5.mp3',  # 訂正
-            'major_wave_warning': '3943b1a91e99f2558a3325ccb39ba22d.mp3',  # 主要動警報
-            'forecast_warning': '7c9101278fbdb29bd4898a97e572ddd0.mp3',  # 予報警報
-            'strong_shaking': 'd62b399771370726d752255c0a040dd3.mp3',  # 強い揺れ
-            'caution': 'ca1a590531afaf99ced3e6fff476fbf8.mp3',  # 注意報
-            'arrived': '1dce89e5d43f35a046185486de4faef5.mp3',  # 到達しました
-            'tsunami_warning': '20ba4384644a9e9b98f675538863773b.mp3',  # 海啸预警
+
+            # 播音员语音 - EEW相关
+            'keihou': 'keihou.mp3',  # 警報（震度5弱以上）
+            'yohou': 'yohou.mp3',  # 予報（震度5弱未満）
+            'emergency_alert': '159244e8557e16cb7a8a88386ac566b6.mp3',  # 緊急地震速報（震度3以上）
+            'correction': 'a9c826ea89ac2745d409a775b8fb8c99.mp3',  # 訂正/更新
+            'final_report': '1e79cf503994fbc4b07e6807d98402e5.mp3',  # 最終報
+
+            # 其他播音
+            'tsunami': '3943b1a91e99f2558a3325ccb39ba22d.mp3',  # 大津波警報
+            'tsunami_warning': '7c9101278fbdb29bd4898a97e572ddd0.mp3',  # 津波警報
+            'tsunami_advisory': 'd62b399771370726d752255c0a040dd3.mp3',  # 津波注意報
+            'tsunami_forecast': 'ca1a590531afaf99ced3e6fff476fbf8.mp3',  # 津波予報
+            'earthquake_info': '1dce89e5d43f35a046185486de4faef5.mp3',  # 地震情報
+            'intensity_report': '20ba4384644a9e9b98f675538863773b.mp3',  # 震度速報
             'epicenter_info': 'a5aedae453531d5eb52c0b19940f3769.mp3',  # 震源情報
-            'chime': 'de4a2891767d3ef4567355631d943700.wav',  # チャイムセンサー
-            
+            'chime': 'de4a2891767d3ef4567355631d943700.wav',  # キャンセル音
+
             # 震度播报 0-6
             # 注意: 震度0-2虽然有音频文件，但实际播报从震度3开始
             # 震度0时长仅1秒，可能是占位符；震度1-2在真实系统中通常不播报
@@ -124,14 +127,30 @@ class SoundManager:
         pygame.mixer.stop()
     
     # ========== 快捷播放方法 ==========
-    
+
     def play_eew(self):
         """播放EEW警报音"""
         return self.play('eew', volume=0.8)
-    
+
+    def play_keihou(self):
+        """播放"警報"语音（震度5弱以上时）"""
+        return self.play('keihou', volume=0.9)
+
+    def play_yohou(self):
+        """播放"予報"语音（震度5弱未満时）"""
+        return self.play('yohou', volume=0.9)
+
     def play_emergency_alert(self):
-        """播放"緊急地震速報"语音"""
+        """播放"緊急地震速報"语音（震度3以上）"""
         return self.play('emergency_alert', volume=0.9)
+
+    def play_correction(self):
+        """播放"訂正"语音"""
+        return self.play('correction', volume=0.9)
+
+    def play_final_report(self):
+        """播放"最終報"语音"""
+        return self.play('final_report', volume=0.9)
     
     def play_intensity(self, intensity):
         """

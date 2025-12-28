@@ -295,8 +295,10 @@ class StationManager:
         1. 底层：站点圆点，使用连续渐变色阶（深蓝→蓝→青→绿→黄→橙→红）
         2. 上层：震度SVG图标（震度>=0时显示，包括震度0）
         """
-        # 图标缩放因子：限制在0.02-0.41之间
-        icon_scale = min(0.41, max(0.02, 0.1 * simulator.zoom_level))
+        # 圆点缩放因子（保持较大）
+        dot_scale = min(0.55, max(0.03, 0.15 * simulator.zoom_level))
+        # SVG图标缩放因子（缩小）
+        icon_scale = min(0.30, max(0.02, 0.08 * simulator.zoom_level))
 
         rendered = 0
 
@@ -313,11 +315,10 @@ class StationManager:
             rendered += 1
             pos = (int(screen_x), int(screen_y))
 
-            # 第一层：始终绘制圆点，颜色随震度连续渐变（稍微放大）
-            r = max(3, int(8 * icon_scale))
+            # 第一层：始终绘制圆点，颜色随震度连续渐变（更大更圆）
+            r = max(4.5, int(14 * dot_scale))
             color = station.get_color()
             pygame.draw.circle(screen, color, pos, r)
-            pygame.draw.circle(screen, (30, 30, 30), pos, r, 1)  # 深色边框
 
             # 第二层：震度>=0时显示SVG图标（包括震度0）
             if station.intensity >= 0 and station_icons:

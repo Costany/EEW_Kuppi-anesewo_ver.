@@ -5,16 +5,22 @@ from typing import Optional
 
 class EEWAlert:
     """EEW警报框 UI"""
-    def __init__(self):
-        # 字体
-        self.large_font = pygame.font.Font(None, 48)
-        self.medium_font = pygame.font.Font(None, 36)
-        self.small_font = pygame.font.Font(None, 28)
-        self.tiny_font = pygame.font.Font(None, 20)
+    def __init__(self, fonts=None):
+        # 字体 - 支持外部传入中文字体
+        if fonts:
+            self.large_font = fonts.get('large', pygame.font.Font(None, 48))
+            self.medium_font = fonts.get('medium', pygame.font.Font(None, 36))
+            self.small_font = fonts.get('small', pygame.font.Font(None, 28))
+            self.tiny_font = fonts.get('tiny', pygame.font.Font(None, 20))
+        else:
+            self.large_font = pygame.font.Font(None, 48)
+            self.medium_font = pygame.font.Font(None, 36)
+            self.small_font = pygame.font.Font(None, 28)
+            self.tiny_font = pygame.font.Font(None, 20)
 
-        # 位置和大小
+        # 位置和大小 - 放在最大震度面板下方 (避免遮挡)
         self.x = 10
-        self.y = 10
+        self.y = 200  # 在黑框信息面板(10,10,360,180)下方
         self.width = 580
         self.height = 180
 
