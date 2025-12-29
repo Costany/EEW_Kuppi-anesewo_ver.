@@ -36,6 +36,9 @@ class Station:
         self.p_arrival_time = None  # P波到达时刻（模拟时间）
         self.p_amplitude = 0  # P波振幅（用于震级估算）
 
+        # 闪烁效果触发记录（追踪已触发的震度等级）
+        self.flash_triggered_levels = set()  # 已触发闪烁的震度等级集合，如 {'3', '4', '5-'}
+
     def update(self, earthquake, current_time: float, dt: float):
         """更新站点状态 - 渐进式增长逻辑（Scratch兼容）"""
         # 使用 earthquake 对象的方法计算正确的到达时间（基于震源距离）
@@ -272,11 +275,32 @@ class StationManager:
             station.time_since_peak = 0
             station.p_arrival_time = None  # 重置P波到达记录
             station.p_amplitude = 0
+            station.flash_triggered_levels = set()  # 重置闪烁触发记录
 
     def update(self, earthquake, current_time: float, dt: float):
-        """更新所有站点"""
+        """更新所有站点
+
+        Returns:
+            tuple: (detected_intensity_levels, flash_stations)
+                - detected_intensity_levels: set 检测到的所有震度等级
+                - flash_stations: list 新达到某震度等级的站点 [(lat, lon, intensity, level), ...]
+                  其中 level 是震度等级字符串如 '3', '4', '5-', '5+', '6-', '6+', '7'
+        """
+        # 震度等级阈值（从低到高）
+        INTENSITY_THRESHOLDS = [
+            ('3', 3.0),
+            ('4', 4.0),
+            ('5-', 5.0),
+            ('5+', 5.5),
+            ('6-', 6.0),
+            ('6+', 6.5),
+            ('7', 7.0),
+        ]
+
         # 收集本次更新检测到的震度等级
         detected_intensity_levels = set()
+        # 收集需要闪烁的站点（首次达到某震度等级）
+        flash_stations = []
 
         for station in self.stations:
             station.update(earthquake, current_time, dt)
@@ -286,7 +310,24 @@ class StationManager:
             if level is not None:
                 detected_intensity_levels.add(level)
 
-        return detected_intensity_levels  # 返回检测到的所有震度等级
+            # 找到当前达到的最高震度等级
+            current_max_level = None
+            current_threshold = 0
+            for level_name, threshold in INTENSITY_THRESHOLDS:
+                if station.intensity >= threshold:
+                    current_max_level = level_name
+                    current_threshold = threshold
+
+            # 如果达到了震度3+，且这个最高等级还没触发过
+            if current_max_level and current_max_level not in station.flash_triggered_levels:
+                # 标记所有低于等于当前等级的为已触发（跳过的低等级不再闪烁）
+                for level_name, threshold in INTENSITY_THRESHOLDS:
+                    if threshold <= current_threshold:
+                        station.flash_triggered_levels.add(level_name)
+                # 只触发当前最高等级的闪烁
+                flash_stations.append((station.lat, station.lon, current_threshold, current_max_level))
+
+        return detected_intensity_levels, flash_stations
 
     def render(self, screen: pygame.Surface, simulator, station_icons: Dict[int, pygame.Surface] = None):
         """渲染所有站点

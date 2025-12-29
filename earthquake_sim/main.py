@@ -209,6 +209,10 @@ class EarthquakeSimulator:
         self.max_triggered_intensity = 0.0  # 已触发的最大震度值
         self.alert_animations = []  # 动画队列: [(lat, lon, start_time, scale), ...]
 
+        # 站点震度闪烁动画（震度3+首次触发时的彩色闪烁）
+        self.station_flash_animations = []  # [(lat, lon, start_time, intensity), ...]
+        self.intensity_flash_counts = {}  # 每个震度等级的闪烁次数计数 {'3': 0, '4': 0, ...}
+
         # EEW警报音播放控制
         self.eew_alert_played = False  # 是否已播放EEW警报音（等到站点检测到地震波才播放）
 
@@ -367,6 +371,8 @@ class EarthquakeSimulator:
         self.keihou_played = False  # 警報音频是否已播放（震度5弱以上）
         self.max_triggered_intensity = 0.0
         self.alert_animations.clear()
+        self.station_flash_animations.clear()  # 清空站点闪烁动画
+        self.intensity_flash_counts = {}  # 重置闪烁次数计数
         self.triggered_intensity_sounds = set()  # 重置音效触发记录
 
         # 重置站点管理器
@@ -437,6 +443,8 @@ class EarthquakeSimulator:
         self.keihou_played = False
         self.max_triggered_intensity = 0.0
         self.alert_animations.clear()
+        self.station_flash_animations.clear()  # 清空站点闪烁动画
+        self.intensity_flash_counts = {}  # 重置闪烁次数计数
 
     def calculate_station_intensities(self):
         """派发单/多震源计算。"""
@@ -579,7 +587,7 @@ class EarthquakeSimulator:
             else:
                 continue
 
-            # 绘制区域填充（根据震度）
+            # 绘制区域填充（根据震度）- 只在非 icons_only 模式下绘制
             if not icons_only and intensity >= 1:
                 fill_color = self._get_region_fill_color(intensity)
                 if fill_color:
@@ -594,17 +602,17 @@ class EarthquakeSimulator:
                             pygame.draw.polygon(temp_surface, fill_color, points)
                             self.screen.blit(temp_surface, (0, 0))
 
-                # 收集区域中心用于绘制图标
-                if not fill_only:
-                    all_lons = []
-                    all_lats = []
-                    for poly in polys:
-                        for lon, lat in poly:
-                            all_lons.append(lon)
-                            all_lats.append(lat)
-                    if all_lons:
-                        cx, cy = self.latlon_to_screen(sum(all_lats)/len(all_lats), sum(all_lons)/len(all_lons))
-                        region_labels.append((cx, cy, intensity))
+            # 收集区域中心用于绘制图标（在非 fill_only 模式下，且震度 >= 1）
+            if not fill_only and intensity >= 1:
+                all_lons = []
+                all_lats = []
+                for poly in polys:
+                    for lon, lat in poly:
+                        all_lons.append(lon)
+                        all_lats.append(lat)
+                if all_lons:
+                    cx, cy = self.latlon_to_screen(sum(all_lats)/len(all_lats), sum(all_lons)/len(all_lons))
+                    region_labels.append((cx, cy, intensity))
 
         # 绘制区域震度标签
         if not fill_only:
@@ -941,6 +949,56 @@ class EarthquakeSimulator:
         # 清理已完成的动画
         for i in reversed(to_remove):
             self.alert_animations.pop(i)
+
+    def draw_station_flash_effects(self):
+        """绘制站点首次达到震度3+时的彩色闪烁效果
+
+        效果：固定大小的实心圆圈，无边框，颜色为震度对应颜色，快速闪烁后消失
+        只在单震源模式下生效
+        每个震度等级只闪前3次
+        """
+        # 只在单震源模式下显示
+        if self.sim_mode != "single":
+            return
+        if not self.earthquake:
+            return
+
+        current_time = self._current_time_value()
+        duration = 0.5  # 动画持续时间（秒）
+        to_remove = []
+
+        for i, (lat, lon, start_time, intensity) in enumerate(self.station_flash_animations):
+            elapsed = current_time - start_time
+            if elapsed > duration:
+                to_remove.append(i)
+                continue
+
+            # 计算动画进度（0到1）
+            progress = elapsed / duration
+
+            # 固定半径，比站点图标大几圈
+            radius = 30
+
+            # 透明度：前半段保持高透明度，后半段快速消失
+            if progress < 0.5:
+                alpha = 200
+            else:
+                alpha = int(200 * (1 - (progress - 0.5) * 2))
+
+            # 获取震度对应的颜色
+            color = get_shindo_color(intensity)
+
+            # 转换为屏幕坐标
+            x, y = self.latlon_to_screen(lat, lon)
+
+            # 绘制实心圆圈（无边框）
+            temp_surface = pygame.Surface((radius * 2 + 4, radius * 2 + 4), pygame.SRCALPHA)
+            pygame.draw.circle(temp_surface, color + (alpha,), (radius + 2, radius + 2), radius)
+            self.screen.blit(temp_surface, (x - radius - 2, y - radius - 2))
+
+        # 清理已完成的动画
+        for i in reversed(to_remove):
+            self.station_flash_animations.pop(i)
 
     def draw_earthquake_info(self):
         """绘制地震速报风格信息（左上角）- 使用震度图标"""
@@ -1971,6 +2029,8 @@ class EarthquakeSimulator:
                         self.keihou_played = False
                         self.max_triggered_intensity = 0.0
                         self.alert_animations.clear()
+                        self.station_flash_animations.clear()  # 重置站点闪烁动画
+                        self.intensity_flash_counts = {}  # 重置闪烁次数计数
                         self.eew_alert_played = False  # 重置EEW警报音播放状态
                         self.tracking_wave_visible = False  # 重置追标波形显示状态
                         self.first_detection_time = None  # 重置首次检测时间
@@ -2120,16 +2180,26 @@ class EarthquakeSimulator:
                     # 先计算站点震度（用于驱动EEW追标器）
                     self.calculate_station_intensities()
 
-                    # 新增：更新站点管理器（返回检测到的震度等级）
+                    # 新增：更新站点管理器（返回检测到的震度等级和闪烁站点）
                     # 重要：使用真实地震对象，确保站点震度从正确的震央位置扩散
                     if self.station_manager:
                         # 使用真实地震对象进行站点计算（如果可用）
                         earthquake_for_stations = self.true_earthquake if hasattr(self, 'true_earthquake') and self.true_earthquake else self.earthquake
-                        detected_levels = self.station_manager.update(
+                        detected_levels, flash_stations = self.station_manager.update(
                             earthquake_for_stations,
                             earthquake_for_stations.time,
                             dt * self.time_scale  # 传递dt参数用于渐进式增长
                         )
+
+                        # 添加站点闪烁动画（震度3+首次触发，每个震度等级只闪3次）
+                        current_time = self._current_time_value()
+                        for lat, lon, intensity, level in flash_stations:
+                            # 检查该震度等级的闪烁次数
+                            if level not in self.intensity_flash_counts:
+                                self.intensity_flash_counts[level] = 0
+                            if self.intensity_flash_counts[level] < 3:
+                                self.intensity_flash_counts[level] += 1
+                                self.station_flash_animations.append((lat, lon, current_time, intensity))
 
                         # 从新站点系统更新区域震度（用于区域填色）
                         self.update_region_intensities_from_new_stations()
@@ -2223,6 +2293,7 @@ class EarthquakeSimulator:
 
             self.draw_wave_circles()
             self.draw_alert_circles()
+            self.draw_station_flash_effects()  # 站点震度3+闪烁效果
 
             self.draw_earthquake_info()
             self.draw_setting_info()
