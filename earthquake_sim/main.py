@@ -288,8 +288,11 @@ class EarthquakeSimulator:
             with open(stations_path, 'r', encoding='utf-8') as f:
                 self.stations = json.load(f)
 
-        # 加载细分区域多边形（地震情報／細分区域）
-        regions_path = os.path.join(data_dir, "area_forecast.geojson")
+        # 加载细分区域多边形（高精度版本用于填色）
+        regions_path = os.path.join(data_dir, "area_forecast_hires.geojson")
+        if not os.path.exists(regions_path):
+            # 回退到低精度版本
+            regions_path = os.path.join(data_dir, "area_forecast.geojson")
         if os.path.exists(regions_path):
             with open(regions_path, 'r', encoding='utf-8') as f:
                 data = json.load(f)
@@ -571,6 +574,9 @@ class EarthquakeSimulator:
         # 图标缩放因子：限制在0.15-0.6之间
         icon_scale = min(0.6, max(0.15, 0.1 * self.zoom_level))
 
+        # 性能优化：按震度分组多边形，每个震度只创建一个Surface
+        intensity_polygons = {}  # intensity_idx -> [(points, ...), ...]
+
         for region in self.regions_data:
             props = region.get('properties', {})
             code = props.get('code', '')
@@ -587,20 +593,38 @@ class EarthquakeSimulator:
             else:
                 continue
 
-            # 绘制区域填充（根据震度）- 只在非 icons_only 模式下绘制
+            # 收集区域填充多边形（按震度分组）
             if not icons_only and intensity >= 1:
-                fill_color = self._get_region_fill_color(intensity)
-                if fill_color:
-                    for poly in polys:
-                        points = []
-                        for lon, lat in poly:
-                            x, y = self.latlon_to_screen(lat, lon)
-                            points.append((int(x), int(y)))
-                        if len(points) >= 3:
-                            # 创建临时surface用于半透明填充
-                            temp_surface = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
-                            pygame.draw.polygon(temp_surface, fill_color, points)
-                            self.screen.blit(temp_surface, (0, 0))
+                # 计算震度索引（用于分组）
+                if intensity < 1.5:
+                    idx = 1
+                elif intensity < 2.5:
+                    idx = 2
+                elif intensity < 3.5:
+                    idx = 3
+                elif intensity < 4.5:
+                    idx = 4
+                elif intensity < 5.0:
+                    idx = 5
+                elif intensity < 5.5:
+                    idx = 6
+                elif intensity < 6.0:
+                    idx = 7
+                elif intensity < 6.5:
+                    idx = 8
+                else:
+                    idx = 9
+
+                if idx not in intensity_polygons:
+                    intensity_polygons[idx] = []
+
+                for poly in polys:
+                    points = []
+                    for lon, lat in poly:
+                        x, y = self.latlon_to_screen(lat, lon)
+                        points.append((int(x), int(y)))
+                    if len(points) >= 3:
+                        intensity_polygons[idx].append(points)
 
             # 收集区域中心用于绘制图标（在非 fill_only 模式下，且震度 >= 1）
             if not fill_only and intensity >= 1:
@@ -613,6 +637,19 @@ class EarthquakeSimulator:
                 if all_lons:
                     cx, cy = self.latlon_to_screen(sum(all_lats)/len(all_lats), sum(all_lons)/len(all_lons))
                     region_labels.append((cx, cy, intensity))
+
+        # 按震度从低到高绘制填充（每个震度只创建一个Surface）
+        if not icons_only and intensity_polygons:
+            for idx in sorted(intensity_polygons.keys()):
+                color = self._get_region_fill_color_by_idx(idx)
+                if color and intensity_polygons[idx]:
+                    # 创建一个共享的临时Surface
+                    temp_surface = pygame.Surface(self.screen.get_size(), pygame.SRCALPHA)
+                    # 绘制该震度的所有多边形
+                    for points in intensity_polygons[idx]:
+                        pygame.draw.polygon(temp_surface, color, points)
+                    # 一次性blit到屏幕
+                    self.screen.blit(temp_surface, (0, 0))
 
         # 绘制区域震度标签
         if not fill_only:
@@ -653,6 +690,21 @@ class EarthquakeSimulator:
             return (200, 0, 100, 210)    # 震度6强 紫红
         else:
             return (200, 0, 200, 220)    # 震度7 紫
+
+    def _get_region_fill_color_by_idx(self, idx: int):
+        """根据震度索引获取区域填充颜色"""
+        colors = {
+            1: (0, 191, 255, 80),     # 震度1 浅蓝
+            2: (0, 255, 191, 100),    # 震度2 青
+            3: (0, 255, 0, 120),      # 震度3 绿
+            4: (255, 255, 0, 140),    # 震度4 黄
+            5: (255, 200, 0, 160),    # 震度5弱 橙黄
+            6: (255, 127, 0, 180),    # 震度5强 橙
+            7: (255, 0, 0, 200),      # 震度6弱 红
+            8: (200, 0, 100, 210),    # 震度6强 紫红
+            9: (200, 0, 200, 220),    # 震度7 紫
+        }
+        return colors.get(idx)
 
     def update_region_intensities_from_new_stations(self):
         """从站点系统更新区域震度（用于区域填色）"""
@@ -1851,9 +1903,11 @@ class EarthquakeSimulator:
         self.zoom_level = new_zoom
 
     def draw_map_boundaries(self):
-        """绘制日本地图边界（使用都道府县数据）"""
+        """绘制日本地图边界（只画都道府县级别，不画细分区域）"""
         land_color = (0x3B, 0x42, 0x38)  # #3B4238
         border_color = (0xD2, 0xD4, 0xD8)  # #D2D4D8
+
+        # 使用都道府县数据（47个县），不用细分区域
         for pref in self.prefectures:
             geom = pref.get('geometry', {})
             coords = geom.get('coordinates', [])
